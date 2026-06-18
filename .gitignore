@@ -1,0 +1,25 @@
+# CMake build output
+build/
+
+# Debug capture files
+debugOutput.txt
+
+# Claude Code AI configuration (local machine only — not for version control)
+.claude/
+
+# Kiro AI specification files (local development notes only)
+.kiro/
+
+# Force-include VS Code configuration.
+# The Pico VS Code extension generates these files with portable ${userHome}
+# paths; committing them lets other developers open the project and build
+# immediately without any manual setup. The negations override any global
+# .gitignore that excludes .vscode/.
+!.vscode/
+!.vscode/*
+
+# macOS metadata
+.DS_Store
+
+# Windows thumbnail cache
+Thumbs.db
