@@ -1,23 +1,29 @@
 # CDTV BLE Mouse Adapter
 
-A Raspberry Pi Pico W / Pico 2 W adapter that connects a modern Bluetooth LE
-mouse or trackball to a Commodore CDTV. It decodes the BLE HID input reports
-and re-encodes them as CDTV CD-1252 infrared frames, making the CDTV cursor
-follow a wireless mouse in real time. Two DB9 joystick ports are always active
-alongside Bluetooth, regardless of whether a mouse is connected.
+This project is an evolution of the Brick double joystick interface. If the Pico
+is a W (wireless) then it is feasible to link modern Bluetooth devices to it,
+allowing modern devices to interact with the CDTV.
 
-Developed and tested with a **Logitech M575 Bluetooth trackball** on a
-**Raspberry Pi Pico 2 W**.
+The author unfortunately does not have a stack of BLE devices to test, and so
+this code is classed as "experimental"; it was developed for and tested with the
+**Logitech M575 Bluetooth trackball** on a **Raspberry Pi Pico 2 W**.
+Other mice and trackballs should work but this is not guaranteed.
 
----
+![Logitech M575 Bluetooth trackball](images/Brick-M575.png)
 
-## What is the CDTV?
+There are some parameters you can change to adjust the sensitivity of the device.
 
-The Commodore CDTV (1991) is an Amiga 500-based multimedia player. Its mouse
-and joystick interfaces are infrared: movement and button presses are sent as
-modulated 40 kHz IR frames rather than through a wire. This project implements
-the CDTV CD-1252 IR mouse protocol, which carries signed 8-bit X/Y deltas and
-button state in a 19-bit frame.
+If you have a BLE device other than the M575 and it's not working correctly, my
+advice would be to point your friendly AI at this GitHub repository, along with
+your symptoms and see if it can amend the code to get it to work. If it does, feel
+free to submit a change.
+
+If you have an M575 then do feel free to create an issue if it's not working as expected.
+
+The M575 appears to work perfectly well; the mouse is responsive and consistent both in
+games and in Workbench.
+
+There's no real change to the Brick joystick functionality.
 
 ---
 
@@ -46,8 +52,9 @@ mouse in pairing mode, wait a few seconds. The LED goes solid when connected.
 ### 60-second pairing window
 
 If no BLE HID device pairs within 60 seconds of power-on, the adapter stops
-scanning and falls back to joystick-only mode for that session. Power-cycle to
-try again.
+scanning and falls back to joystick-only mode for that session. The LED
+switches to slow blinking to indicate that joystick ports remain active but
+no mouse is connected. Power-cycle to retry pairing.
 
 ### One BLE device at a time
 
@@ -66,68 +73,6 @@ attack. It cannot be changed without adding user I/O hardware.
 The mouse must support standard Bluetooth LE HID (HOGP). Proprietary wireless
 protocols that happen to use the 2.4 GHz band — such as Logitech Unifying or
 Bolt USB receivers — will not work, because they are not standard BLE.
-
----
-
-## Hardware
-
-### Components
-
-- Raspberry Pi Pico W or Pico 2 W
-- IR LED (850–940 nm; 940 nm recommended to match the CDTV receiver)
-- Current-limiting resistor for the IR LED (33–100 Ω depending on the LED;
-  target 20–50 mA peak drive current)
-- Two DB9 female connectors for the joystick ports
-- Optional: external 4k7 pull-up resistors on joystick inputs (internal
-  pull-ups are enabled in software; external ones improve noise immunity)
-
-### GPIO pinout — Version 2 board (default, `BOARD_VERSION=2`)
-
-UART serial debug output is available on GP0/GP1. This is the recommended
-layout.
-
-| Signal        | GPIO | Notes                                           |
-|---------------|------|-------------------------------------------------|
-| UART TX       | GP0  | 115200 baud serial debug output                 |
-| UART RX       | GP1  |                                                 |
-| JOY1 UP       | GP2  |                                                 |
-| JOY1 DOWN     | GP3  |                                                 |
-| JOY1 LEFT     | GP4  |                                                 |
-| JOY1 RIGHT    | GP5  |                                                 |
-| JOY1 FIRE2    | GP6  |                                                 |
-| JOY1 FIRE1    | GP7  |                                                 |
-| JOY2 UP       | GP10 |                                                 |
-| JOY2 DOWN     | GP11 |                                                 |
-| JOY2 LEFT     | GP12 |                                                 |
-| JOY2 RIGHT    | GP13 |                                                 |
-| JOY2 FIRE2    | GP14 |                                                 |
-| JOY2 FIRE1    | GP15 | **Also the BLE pairing trigger** (hold at boot) |
-| IR LED        | GP16 | Via current-limiting resistor to GND            |
-
-All joystick inputs are active-low (button pressed = GPIO low). The standard
-Amiga/Atari DB9 joystick pinout applies: pin 1 = UP, pin 2 = DOWN, pin 3 =
-LEFT, pin 4 = RIGHT, pin 6 = FIRE1, pin 9 = FIRE2, pin 8 = GND.
-
-### GPIO pinout — Version 1 board (`BOARD_VERSION=1`)
-
-UART serial is not available on this layout (GP0 and GP1 are used for joystick
-port 1). The IR LED moves to GP20. Set `BOARD_VERSION=1` in `CMakeLists.txt`.
-
-| Signal        | GPIO |
-|---------------|------|
-| JOY1 UP       | GP0  |
-| JOY1 DOWN     | GP1  |
-| JOY1 LEFT     | GP2  |
-| JOY1 RIGHT    | GP3  |
-| JOY1 FIRE2    | GP4  |
-| JOY1 FIRE1    | GP5  |
-| JOY2 UP       | GP10 |
-| JOY2 DOWN     | GP11 |
-| JOY2 LEFT     | GP12 |
-| JOY2 RIGHT    | GP13 |
-| JOY2 FIRE2    | GP14 |
-| JOY2 FIRE1    | GP15 | ← BLE pairing trigger |
-| IR LED        | GP20 |
 
 ---
 
@@ -170,19 +115,29 @@ reboots automatically and the adapter starts running.
 ### Pairing a Bluetooth mouse
 
 1. **Hold FIRE1 on joystick port 2 (GP15) while powering on.**
-2. The LED blinks rapidly — the adapter is scanning for a BLE HID device.
+2. The LED is solid during initialisation then switches to fast blinking —
+   the adapter is scanning for a BLE HID device.
 3. Put your Bluetooth mouse or trackball into pairing mode.
-4. On successful pairing the LED blinks three times quickly then goes solid.
+4. On successful pairing the LED goes solid.
 5. Move the mouse — the CDTV cursor should respond.
 
-If the LED stops blinking and goes dark, the 60-second pairing window expired.
-Power-cycle and try again.
+If the LED switches to slow blinking, the 60-second pairing window expired.
+The joystick ports remain active. Power-cycle to retry pairing.
 
 ### Joystick-only mode
 
 Power on **without** holding the fire button. Both DB9 joystick ports are
-active immediately. No Bluetooth scanning takes place, the LED stays off, and
+active immediately. The LED is solid. No Bluetooth scanning takes place and
 the adapter uses no wireless power.
+
+### Using mouse and joystick together
+
+The CDTV CD-1200 IR receiver expects one protocol at a time. If you switch
+between the mouse and a joystick, the adapter enforces strict mutual exclusion
+on the IR line: whichever device sends first wins, and the other is blocked
+until the active device has been idle for one second. This prevents the CDTV
+decoder from receiving mixed-protocol frames that would corrupt its state.
+Switching between devices takes at most one second of inactivity.
 
 ### Serial debug output
 
@@ -217,10 +172,10 @@ Each frame's accumulated movement is multiplied by `NUM / DEN` before
 transmission. The default `2/3` was tuned for a **Logitech M575 at 1000 DPI**
 to feel similar to a real CDTV wired trackball.
 
-| Symptom                          | Adjustment                        |
-|----------------------------------|-----------------------------------|
-| Cursor too fast / overshooting   | Reduce the ratio, e.g. `1` / `2` |
-| Cursor too slow / sluggish       | Increase the ratio, e.g. `1` / `1`|
+| Symptom                          | Adjustment                         |
+|----------------------------------|------------------------------------|
+| Cursor too fast / overshooting   | Reduce the ratio, e.g. `1` / `2`  |
+| Cursor too slow / sluggish       | Increase the ratio, e.g. `1` / `1` |
 
 Higher-DPI mice send larger deltas per physical millimetre and need a smaller
 ratio. Lower-DPI mice need a larger one. The HID Report Descriptor parser
@@ -239,7 +194,7 @@ change is usually needed when switching mouse models.
 | `CDTV-IR-Mouse.c/.h` | CDTV CD-1252 mouse IR encoder (19-bit frames, 40 kHz carrier) |
 | `CDTV-Joystick.c/.h` | DB9 joystick GPIO reader and CDTV joystick IR encoder (25-bit frames) |
 | `CDTV-IR-PWM.c/.h` | Shared 40 kHz PWM carrier driver for the IR LED |
-| `CDTV-CoreLink.c/.h` | Inter-core hand-off — mouse accumulator (spinlock), joystick bits and connection flag (atomics) |
+| `CDTV-CoreLink.c/.h` | Inter-core hand-off — mouse accumulator (spinlock), connection flag (atomic). Joystick state is read directly by core 1 at frame time rather than published through the link. |
 
 ### Two-core design
 
@@ -248,6 +203,11 @@ guarantees — the wireless driver may hold the bus for unpredictable durations.
 Core 1 owns the IR LED exclusively and runs a tight loop with no wireless
 interrupts. This separation is what keeps the IR timing clean: BLE background
 work on core 0 cannot stretch a mark or jitter the inter-frame gap on core 1.
+
+Core 1 reads joystick GPIO directly at the moment each frame is transmitted,
+rather than relying on state published by core 0. This ensures joystick button
+presses and releases are captured at full resolution with no inter-core
+staleness window.
 
 ---
 

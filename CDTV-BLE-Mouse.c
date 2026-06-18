@@ -131,6 +131,7 @@ static bool device_bonded = false;
 
 // Pairing timeout one-shot timer
 static btstack_timer_source_t g_pairing_timeout_timer;
+static bool g_pairing_timed_out = false;
 
 // Callback
 static mouse_input_callback_t input_callback = NULL;
@@ -1026,7 +1027,8 @@ static void pairing_timeout_callback(btstack_timer_source_t *ts) {
     (void)ts;
     printf("BLE: Pairing timeout — no device paired within %d ms\n", PAIRING_TIMEOUT_MS);
     gap_stop_scan();
-    g_ble_state = BLE_STATE_OFF;
+    g_ble_state        = BLE_STATE_OFF;
+    g_pairing_timed_out = true;
 }
 
 // =============================================================================
@@ -1082,4 +1084,8 @@ void ble_mouse_process_events(void) {
 
 bool ble_mouse_is_connected(void) {
     return (g_ble_state == BLE_STATE_READY);
+}
+
+bool ble_mouse_is_timed_out(void) {
+    return g_pairing_timed_out;
 }

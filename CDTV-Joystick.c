@@ -11,10 +11,10 @@
  * joystick_ir_send_frame() and interleaves it with mouse frames, so the two
  * never overlap on the wire. This file just reads the ports and encodes a frame.
  *
- * IR frame format (25 bits, MSB first):
- *   [24:13]  12 data bits  (joystick state)
- *   [12:1]   12 check bits (bitwise NOT of data bits)
- *   [0]      Identifier = 0 (joystick; mouse frames use 1)
+ * IR frame format (25 bits, sent MSB-first after header):
+ *   Bit 24   Identifier = 0 (sent first; mouse frames start with 1)
+ *   [23:12]  12 data bits  (joystick state, bit 11 first)
+ *   [11:0]   12 check bits (bitwise NOT of data bits, bit 11 first)
  */
 // =============================================================================
 

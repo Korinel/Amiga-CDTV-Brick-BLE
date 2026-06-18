@@ -60,4 +60,12 @@ void ble_mouse_process_events(void);
  */
 bool ble_mouse_is_connected(void);
 
+/**
+ * Check if the pairing timeout has expired.
+ * Returns true once the PAIRING_TIMEOUT_MS timer has fired and BLE has
+ * stopped scanning. BLE remains initialised but idle for the session.
+ * @return true if timed out
+ */
+bool ble_mouse_is_timed_out(void);
+
 #endif // CDTV_BLE_MOUSE_H

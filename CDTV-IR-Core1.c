@@ -51,6 +51,32 @@
 #define MOUSE_SCALE_DEN 3
 #endif
 
+// =============================================================================
+// Active-device lock
+//
+// The CDTV was designed for one pointing device at a time.  Interleaving mouse
+// and joystick frames on the IR line risks violating the inter-frame silence
+// the receiver needs to reset between protocols, permanently confusing its
+// decoder state.
+//
+// The lock enforces strict mutual exclusion:
+//   ACTIVE_NONE  — neither device active; whichever transmits first wins.
+//   ACTIVE_MOUSE — only mouse frames sent; joystick blocked.
+//   ACTIVE_JOY   — only joystick frames sent; mouse blocked.
+//
+// After IDLE_LOCK_US of silence from the active device the lock is released and
+// both cadence timers are reset to now, so whichever device moves first wins
+// cleanly with no stale catch-up frames.
+// =============================================================================
+typedef enum {
+    ACTIVE_NONE,
+    ACTIVE_MOUSE,
+    ACTIVE_JOY,
+} active_device_t;
+
+// 1 second of idle releases the lock and allows the other device to take over.
+#define IDLE_LOCK_US 1000000ULL
+
 // Ignore a frame's motion if an implausible number of reports landed in it.
 // Genuine movement is only 1-4 reports per frame; a much larger count is an
 // artifact of a momentary stall, carrying stale zero-motion keepalives.
@@ -122,14 +148,12 @@ static bool emit_mouse_frame(void)
 // =============================================================================
 // Core 1 entry point.
 //
-// Cadence: own the mouse frame period as the metronome. The joystick frame runs
-// at a faster nominal rate; we interleave it between mouse frames using a simple
-// elapsed-time check so the two frame types never overlap on the wire. Core 1
-// is the only thing driving the LED, so this serialisation is guaranteed.
+// Runs the active-device lock: only one protocol is on the IR line at a time.
+// Whichever device produces the first frame wins the lock; the other is blocked
+// until the winner has been idle for IDLE_LOCK_US (1 second), at which point
+// both cadence timers are reset to now and the race begins again.
 //
-// We measure the time each transmission actually took and sleep only the
-// remainder of the period, keeping the long-run cadence locked to the frame
-// period regardless of frame content length.
+// Core 1 is the sole owner of the IR LED — nothing else drives it.
 // =============================================================================
 void ir_core1_main(void)
 {
@@ -137,46 +161,60 @@ void ir_core1_main(void)
     // but call again here defensively — ir_transmitter_init() is safe to repeat.
     ir_transmitter_init();
 
-    absolute_time_t next_mouse = get_absolute_time();
-    absolute_time_t next_joy   = get_absolute_time();
+    absolute_time_t next_mouse  = get_absolute_time();
+    absolute_time_t next_joy    = get_absolute_time();
+    absolute_time_t last_active = get_absolute_time();
+    active_device_t active      = ACTIVE_NONE;
 
     while (true) {
         absolute_time_t now = get_absolute_time();
 
-        // ---- Mouse frame (primary cadence) --------------------------------
-        if (absolute_time_diff_us(next_mouse, now) >= 0) {
-            // Schedule the next mouse slot relative to this one (fixed cadence).
+        // ---- Idle-lock release -------------------------------------------
+        // If the active device has been silent for IDLE_LOCK_US, release the
+        // lock and reset both cadence timers so the first new activity wins.
+        if (active != ACTIVE_NONE &&
+            absolute_time_diff_us(last_active, now) >= (int64_t)IDLE_LOCK_US) {
+            active     = ACTIVE_NONE;
+            next_mouse = now;
+            next_joy   = now;
+        }
+
+        // ---- Mouse frame ------------------------------------------------
+        // Blocked while joystick holds the lock.
+        if (active != ACTIVE_JOY &&
+            absolute_time_diff_us(next_mouse, now) >= 0) {
+
             next_mouse = delayed_by_us(next_mouse, (uint64_t)IR_FRAME_PERIOD_US);
 
             if (corelink_mouse_connected()) {
-                emit_mouse_frame();
-                // A mouse frame occupies the LED for a full frame period
-                // (marks + spaces + gap). Push the joystick slot out so it does
-                // not collide with the frame we just sent.
-                next_joy = delayed_by_us(get_absolute_time(),
-                                         (uint64_t)JOYSTICK_IR_FRAME_PERIOD_US);
+                bool sent = emit_mouse_frame();
+                if (sent) {
+                    active      = ACTIVE_MOUSE;
+                    last_active = get_absolute_time();
+                }
                 continue;
             }
         }
 
-        // ---- Joystick frame (interleaved) ---------------------------------
-        if (absolute_time_diff_us(next_joy, now) >= 0) {
-            next_joy = delayed_by_us(next_joy,
-                                     (uint64_t)JOYSTICK_IR_FRAME_PERIOD_US);
+        // ---- Joystick frame ---------------------------------------------
+        // Blocked while mouse holds the lock.
+        if (active != ACTIVE_MOUSE &&
+            absolute_time_diff_us(next_joy, now) >= 0) {
 
-            uint16_t joy_bits = corelink_joystick_get();
-            // joystick_ir_send_frame includes its own inter-frame gap.
-            // Idle suppression: a zero bitmask means no joystick input.
+            next_joy = delayed_by_us(next_joy, (uint64_t)JOYSTICK_IR_FRAME_PERIOD_US);
+
+            uint16_t joy_bits = (uint16_t)(joystick_read_all() & 0x0FFF);
             static uint32_t joy_idle = 0;
             if (joy_bits == 0) joy_idle++; else joy_idle = 0;
             if (joy_idle < IDLE_SUPPRESS_THRESHOLD) {
                 joystick_ir_send_frame(joy_bits);
+                active      = ACTIVE_JOY;
+                last_active = get_absolute_time();
             }
             continue;
         }
 
-        // Nothing due yet — yield briefly. Core 1 has no other work, so a short
-        // sleep keeps the cadence tight without busy-spinning the bus.
+        // Nothing due yet — yield briefly.
         sleep_us(100);
     }
 }

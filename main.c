@@ -25,8 +25,9 @@
  * --------------------------------------------
  *   Fire held     -> BLE pairing mode: scan for the first HID device, pair and
  *                    connect. 60 s timeout; if nothing pairs, fall back to
- *                    joystick-only. On pairing the LED blinks 3x then goes solid.
- *   Fire not held -> Joystick-only mode immediately. No Bluetooth, no scanning.
+ *                    joystick-only. LED: slow blink (boot) → fast blink (scanning)
+ *                    → solid (connected) → slow blink (timeout, joystick active).
+ *   Fire not held -> Joystick-only mode immediately. No Bluetooth. LED solid.
  *
  * Both DB9 joystick ports are always active regardless of Bluetooth state.
  */
@@ -73,15 +74,14 @@ static const char * const board_name_str = "Pico / Pico 2 (no wireless)";
 typedef enum
 {
     LED_PATTERN_OFF,
-    LED_PATTERN_SOLID,         // Connected
-    LED_PATTERN_FAST_BLINK,    // 2 Hz (250 ms) — scanning / pairing
-    LED_PATTERN_CONFIRM_BLINK, // 3 fast blinks then solid — pair confirmed
+    LED_PATTERN_SLOW_BLINK,    // 1 Hz (500 ms) — booting / initialising
+    LED_PATTERN_FAST_BLINK,    // 4 Hz (125 ms) — scanning / pairing
+    LED_PATTERN_SOLID,         // Connected and active
 } led_pattern_t;
 
 static led_pattern_t g_led_pattern = LED_PATTERN_OFF;
 static bool g_led_state = false;
 static btstack_timer_source_t g_led_timer;
-static int g_confirm_blinks = 0; // countdown for confirm blink
 
 static void set_led_hw(bool on)
 {
@@ -102,27 +102,17 @@ static void led_timer_callback(btstack_timer_source_t *ts)
     case LED_PATTERN_OFF:
         set_led_hw(false);
         return;
+    case LED_PATTERN_SLOW_BLINK:
+        g_led_state = !g_led_state;
+        set_led_hw(g_led_state);
+        btstack_run_loop_set_timer(ts, 500);
+        btstack_run_loop_add_timer(ts);
+        return;
     case LED_PATTERN_FAST_BLINK:
         g_led_state = !g_led_state;
         set_led_hw(g_led_state);
-        btstack_run_loop_set_timer(ts, 250);
+        btstack_run_loop_set_timer(ts, 125);
         btstack_run_loop_add_timer(ts);
-        return;
-    case LED_PATTERN_CONFIRM_BLINK:
-        // 3 fast blinks (6 transitions) then solid
-        if (g_confirm_blinks > 0)
-        {
-            g_led_state = !g_led_state;
-            set_led_hw(g_led_state);
-            g_confirm_blinks--;
-            btstack_run_loop_set_timer(ts, 100);
-            btstack_run_loop_add_timer(ts);
-        }
-        else
-        {
-            g_led_pattern = LED_PATTERN_SOLID;
-            set_led_hw(true);
-        }
         return;
     default:
         return;
@@ -132,8 +122,6 @@ static void led_timer_callback(btstack_timer_source_t *ts)
 static void led_set_pattern(led_pattern_t pattern)
 {
     g_led_pattern = pattern;
-    if (pattern == LED_PATTERN_CONFIRM_BLINK)
-        g_confirm_blinks = 6;
     btstack_run_loop_remove_timer(&g_led_timer);
     btstack_run_loop_set_timer_handler(&g_led_timer, led_timer_callback);
     btstack_run_loop_set_timer(&g_led_timer, 1);
@@ -200,38 +188,46 @@ int main(void)
     printf("  Fire btn: %s\n", fire_pressed ? "PRESSED (pairing mode)" : "not pressed (joystick only)");
     printf("##############################################################\n\n");
 
-    // Step 4: If fire not pressed, go straight to joystick-only
+    // Step 4: Init CYW43 once for LED control (needed in both modes on Pico W/2W).
+    // Doing this before the mode branch ensures it is called exactly once,
+    // preventing double-init problems on soft reset.
+#ifdef CYW43_ENABLE_BLUETOOTH
+    printf("Initializing CYW43...\n");
+    if (cyw43_arch_init() != 0)
+        printf("WARNING: CYW43 init failed — LED will not work\n");
+    else
+        init_led_hw();
+#else
+    init_led_hw();
+#endif
+
+    // Step 5: Branch on fire button
     if (!fire_pressed)
     {
         printf("Mode: Joystick-only (hold fire button at boot to pair BLE mouse)\n\n");
+        led_set_pattern(LED_PATTERN_SOLID); // joystick active
         goto joystick_only_mode;
     }
 
-    // Step 5: Fire pressed — init BLE for pairing
 #ifndef CYW43_ENABLE_BLUETOOTH
     printf("No wireless capability — joystick-only mode\n");
     goto joystick_only_mode;
 #endif
 
-    printf("Initializing CYW43...\n");
-    if (cyw43_arch_init() != 0)
-    {
-        printf("ERROR: CYW43 init failed — joystick-only mode\n");
-        goto joystick_only_mode;
-    }
-    init_led_hw();
+    led_set_pattern(LED_PATTERN_SOLID); // booting — solid on
 
     // Step 6: Init IR transmitter and self-test
     ir_transmitter_init();
     ir_transmitter_selftest();
 
     // Step 7: Init BLE in pairing mode
-    led_set_pattern(LED_PATTERN_FAST_BLINK);
+    led_set_pattern(LED_PATTERN_FAST_BLINK); // scanning — fast flash
     printf("Boot: Pairing mode (timeout %d s) — put mouse in pairing mode\n",
            PAIRING_TIMEOUT_MS / 1000);
     if (!ble_mouse_init_pairing(mouse_input_callback))
     {
         printf("ERROR: BLE init failed — joystick-only mode\n");
+        led_set_pattern(LED_PATTERN_SLOW_BLINK); // pair error
         goto joystick_only_mode;
     }
 
@@ -262,8 +258,7 @@ int main(void)
             was_connected = is_connected;
             if (is_connected)
             {
-                // 3 fast blinks then solid — confirms successful pair/connect
-                led_set_pattern(LED_PATTERN_CONFIRM_BLINK);
+                led_set_pattern(LED_PATTERN_SOLID);
                 printf("BLE: Mouse connected\n");
             }
             else
@@ -276,12 +271,19 @@ int main(void)
             corelink_set_mouse_connected(is_connected);
         }
 
-        // Core 0 is input-only. Publish the latest joystick GPIO state so core 1
-        // can interleave joystick frames. Mouse input is delivered to the link
-        // asynchronously by mouse_input_callback. ALL IR transmission and timing
-        // happens on core 1 — core 0 never touches the IR LED.
-        corelink_joystick_set((uint16_t)(joystick_read_all() & 0x0FFF));
+        // Detect pairing timeout — turn LED off and keep running for joystick.
+        static bool timed_out = false;
+        if (!timed_out && ble_mouse_is_timed_out()) {
+            timed_out = true;
+            led_set_pattern(LED_PATTERN_SLOW_BLINK); // joystick still active
+            printf("BLE: Pairing timed out — joystick still active (reboot to retry)\n");
+        }
 
+        // Mouse input is delivered to the link asynchronously by
+        // mouse_input_callback. Joystick state is read directly by core 1
+        // at frame time so no publish step is needed here.
+        // ALL IR transmission and timing happens on core 1 — core 0 never
+        // touches the IR LED.
         __wfi();
     }
 
@@ -301,29 +303,12 @@ joystick_only_mode:
     corelink_set_mouse_connected(false);
     multicore_launch_core1(ir_core1_main);
 
-#ifndef CYW43_ENABLE_BLUETOOTH
-    gpio_init(LED_GPIO);
-    gpio_set_dir(LED_GPIO, GPIO_OUT);
-    gpio_put(LED_GPIO, 0);
-#endif
-
-    // LED blinks at 0.5 Hz (1000 ms half-period), driven off wall-clock time.
-    absolute_time_t next_led = make_timeout_time_ms(1000);
+    // LED is already set to SOLID by the mode branch above (or to the last
+    // pattern set before a BLE error fallthrough). Nothing more needed here.
 
     while (true)
     {
-        // Publish latest joystick GPIO state for core 1 to transmit.
         corelink_joystick_set((uint16_t)(joystick_read_all() & 0x0FFF));
-
-        if (absolute_time_diff_us(next_led, get_absolute_time()) >= 0)
-        {
-            next_led = make_timeout_time_ms(1000);
-            g_led_state = !g_led_state;
-#ifndef CYW43_ENABLE_BLUETOOTH
-            gpio_put(LED_GPIO, g_led_state ? 1 : 0);
-#endif
-        }
-
-        sleep_ms(5);   // poll joystick at ~200 Hz; core 1 handles frame timing
+        sleep_ms(5);
     }
 }

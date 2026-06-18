@@ -97,9 +97,9 @@ uint32_t joystick_read_all(void);
  * @param joy_bits  12-bit joystick state (bits [5:0]=JOY2, bits [11:6]=JOY1)
  *
  * Frame layout (MSB first, bit 24 first on wire):
- *   [24:13]  12 data bits (joy_bits)
- *   [12:1]   12 inverted check bits (~joy_bits & 0xFFF)
- *   [0]      Joystick identifier = 0 (distinguishes from mouse frames)
+ *   [24]     Identifier = 0 (sent first; mouse frames start with 1)
+ *   [23:12]  12 data bits (joy_bits, bit 11 first)
+ *   [11:0]   12 inverted check bits (~joy_bits & 0xFFF, bit 11 first)
  */
 void joystick_ir_send_frame(uint16_t joy_bits);
 
