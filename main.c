@@ -173,7 +173,7 @@ int main(void)
     joystick_init();
 
     // Step 2: Settle pull-up lines
-    sleep_ms(5);
+    sleep_ms(50);
 
     // Step 3: Sample fire button before any wireless init
     bool fire_pressed = boot_sample_fire_button();

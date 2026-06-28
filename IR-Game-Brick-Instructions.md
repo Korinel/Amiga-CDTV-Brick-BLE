@@ -30,11 +30,8 @@ The Game Brick exists in two versions:
 
 > **Important — firmware versions:** Version 2 moved the joystick and IR GPIO pins
 > to accommodate the serial header. When flashing firmware, ensure you use the build
-> compiled for your board version. In `CDTV-Joystick.h`, the relevant line is:
->
-> ```c
-> #define BOARD_VERSION 2   // change to 1 for the green PCB
-> ```
+> compiled for your board version. CMakeLists.txt will build two versions one
+> for each PCB: CDTV-BLE-Mouse-v2.uf2 and CDTV-BLE-Mouse-v1.uf2
 
 ---
 
@@ -107,3 +104,8 @@ located to the right of the CD drive, inside a white housing labelled **"Remote"
 - Keep the line of sight clear of obstructions.
 - The IR LED is on the inside of the enclosure — orient the Brick so the correct
   face points toward the CDTV sensor.
+
+## Updates
+Visit https://github.com/Korinel/ for more information and 
+https://github.com/Korinel/Amiga-CDTV-Brick-BLE for firmware.
+
